@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using CsvHelper;
 using System.Globalization;
 using KorogodovMapApp.Models;
+using Microsoft.EntityFrameworkCore.Metadata;
+using System.Xml.Linq;
+using System;
 
 namespace KorogodovMapApp;
 
@@ -12,17 +15,20 @@ public sealed class ApplicationContext : DbContext
     public DbSet<SportObjectDetail> SportObjectDetails => Set<SportObjectDetail>();
     public DbSet<SportObjectType> SportObjectTypes => Set<SportObjectType>();
     public DbSet<SportType> SportTypes => Set<SportType>();
-
+    public DbSet<Curator> Curators => Set<Curator>();
 
     public ApplicationContext()
     {
         Database.EnsureCreated();
 
-        if (SportObjects.Any())
+        if (!SportObjects.Any())
         {
-            return;
+            InitData();
         }
+    }
 
+    private void InitData()
+    {
         using var reader = new StreamReader(@"data.csv");
         using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
 
@@ -54,82 +60,175 @@ public sealed class ApplicationContext : DbContext
                 csv.TryGetField<string>("Действия с объектом:", out var action);
                 csv.TryGetField<DateTime?>("Дата начала строительства / реконструкции:", out var actionStartDate);
                 csv.TryGetField<DateTime?>("Дата завершения строительства / реконструкции:", out var actionEndDate);
+                csv.TryGetField<string>("ОКТМО:", out var oktmo);
+                csv.TryGetField<int?>("Общий объём финансирования:", out var totalFunding);
 
+                csv.TryGetField<string>("Курирующий орган:", out var curatorName);
+                csv.TryGetField<string>("Телефон курирующего органа:", out var curatorPhoneNumber);
 
-                if (string.IsNullOrEmpty(sportObjectTypeName))
-                {
-                    sportObjectTypeName = "Иное";
-                }
+                var sportObjectType = GetOrCreateSportObjectType(sportObjectTypeName);
 
-                var sportObjectType = SportObjectTypes.FirstOrDefault(type => type.Name == sportObjectTypeName);
+                var sportObjectDetail = CreateSportObjectDetail(shortDescription, additionalDescription, email,
+                    phoneNumber, address, city, federalSubject, municipalDistrict, actionStartDate, actionEndDate,
+                    action, oktmo, totalFunding);
 
-                if (sportObjectType == null)
-                {
-                    sportObjectType = new SportObjectType
-                    {
-                        Name = sportObjectTypeName
-                    };
-                    SportObjectTypes.Add(sportObjectType);
-                    SaveChanges();
-                }
+                var sportObject = CreateSportObject(id, name, sportObjectType, sportObjectDetail, x, y, url, workingHoursMondayToFriday, workingHoursSaturday, workingHoursSunday, isActive);
 
-                var sportObjectDetail = new SportObjectDetail
-                {
-                    ShortDescription = shortDescription,
-                    AdditionalDescription = additionalDescription,
-                    Email = email,
-                    PhoneNumber = phoneNumber,
-                    Address = address,
-                    City = city,
-                    FederalSubject = federalSubject,
-                    MunicipalDistrict = municipalDistrict,
-                    ActionStartDate = actionStartDate,
-                    ActionEndDate = actionEndDate,
-                    IsReconstruction = (action == "реконструкция")
-                };
+                var curator = GetOrCreateCurator(curatorName, curatorPhoneNumber);
 
-                SportObjectDetails.Add(sportObjectDetail);
-
-                var sportObject = new SportObject
-                {
-                    Id = id,
-                    Name = name,
-                    SportObjectType = sportObjectType,
-                    SportObjectDetail = sportObjectDetail,
-                    X = x,
-                    Y = y,
-                    URL = url,
-                    WorkingHoursMondayToFriday = workingHoursMondayToFriday,
-                    WorkingHoursSaturday = workingHoursSaturday,
-                    WorkingHoursSunday = workingHoursSunday,
-                    IsActive = (isActive == "Y")
-                };
-
-                SportObjects.Add(sportObject);
-
-                SaveChanges();
+                sportObject.Curator = curator;
 
                 foreach (var sportTypeName in sportTypeNames.Split(',',
                              StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
-                    var sportType = SportTypes.FirstOrDefault(type => type.Name == sportTypeName);
-                    if (sportType == null)
-                    {
-                        sportType = new SportType
-                        {
-                            Name = sportTypeName
-                        };
-                        SportTypes.Add(sportType);
-                        SaveChanges();
-                    }
+                    var sportType = GetOrCreateSportType(sportTypeName);
                     sportObject.SportTypes.Add(sportType);
                 }
 
                 SaveChanges();
             }
         }
+    }
+
+    private SportObjectType GetOrCreateSportObjectType(string sportObjectTypeName)
+    {
+        if (string.IsNullOrEmpty(sportObjectTypeName))
+        {
+            sportObjectTypeName = "Иное";
+        }
+
+        var sportObjectType = SportObjectTypes.FirstOrDefault(type => type.Name == sportObjectTypeName);
+
+        if (sportObjectType == null)
+        {
+            sportObjectType = new SportObjectType
+            {
+                Name = sportObjectTypeName,
+                Icon = sportObjectTypeName switch
+                {
+                    "бассейн" => "Pool",
+                    "зал спортивный" => "Sport",
+                    "многофункциональный спортивный комплекс" => "Star",
+                    "стадион" or "манеж легкоатлетический" => "Run",
+                    "комплекс горнолыжный" => "Mountain",
+                    "канал гребной" or "канал для гребного слалома" => "WaterPark",
+                    "велотрек" => "Bicycle2",
+                    "трасса спортивная" => "Auto",
+                    "Иное" => "Dot",
+                    _ => string.Empty
+                }
+            };
+            SportObjectTypes.Add(sportObjectType);
+            SaveChanges();
+        }
+
+        return sportObjectType;
+    }
+
+    private SportObjectDetail CreateSportObjectDetail(string shortDescription, string additionalDescription,
+        string email,
+        string phoneNumber, string address, string city, string federalSubject, string municipalDistrict,
+        DateTime? actionStartDate, DateTime? actionEndDate, string action, string oktmo, int? totalFunding)
+    {
+        if (actionStartDate?.Date.Year < 1000)
+        {
+            actionStartDate = actionStartDate.Value.Date.AddYears(2000);
+        }
+
+        if (actionEndDate?.Date.Year < 1000)
+        {
+            actionEndDate = actionEndDate.Value.Date.AddYears(2000);
+        }
+
+        var sportObjectDetail = new SportObjectDetail
+        {
+            ShortDescription = shortDescription,
+            AdditionalDescription = additionalDescription,
+            Email = email,
+            PhoneNumber = phoneNumber,
+            Address = address,
+            City = city,
+            FederalSubject = federalSubject,
+            MunicipalDistrict = municipalDistrict,
+            ActionStartDate = actionStartDate,
+            ActionEndDate = actionEndDate,
+            IsReconstruction = (action == "реконструкция"),
+            OKTMO = oktmo,
+            TotalFunding = totalFunding
+        };
+
+        SportObjectDetails.Add(sportObjectDetail);
+
+        return sportObjectDetail;
+    }
+
+    private SportObject CreateSportObject(int id, string name, SportObjectType sportObjectType,
+        SportObjectDetail sportObjectDetail, float x, float y, string url, string workingHoursMondayToFriday,
+        string workingHoursSaturday, string workingHoursSunday, string isActive)
+    {
+        if (!string.IsNullOrEmpty(url) && !url.StartsWith("http"))
+        {
+            url = "http://" + url;
+        }
+
+        var sportObject = new SportObject
+        {
+            Id = id,
+            Name = name,
+            SportObjectType = sportObjectType,
+            SportObjectDetail = sportObjectDetail,
+            X = x,
+            Y = y,
+            URL = url,
+            WorkingHoursMondayToFriday = workingHoursMondayToFriday,
+            WorkingHoursSaturday = workingHoursSaturday,
+            WorkingHoursSunday = workingHoursSunday,
+            IsActive = (isActive == "Y")
+        };
+
+        SportObjects.Add(sportObject);
 
         SaveChanges();
+
+        return sportObject;
+    }
+
+    private SportType GetOrCreateSportType(string sportTypeName)
+    {
+        var sportType = SportTypes.FirstOrDefault(type => type.Name == sportTypeName);
+        if (sportType == null)
+        {
+            sportType = new SportType
+            {
+                Name = sportTypeName
+            };
+            SportTypes.Add(sportType);
+            SaveChanges();
+        }
+
+        return sportType;
+    }
+
+    private Curator GetOrCreateCurator(string curatorName, string curatorPhoneNumber)
+    {
+        if (string.IsNullOrEmpty(curatorName))
+        {
+            return null;
+        }
+
+        var curator = Curators.FirstOrDefault(curator => curator.Name == curatorName);
+        if (curator == null)
+        {
+            curator = new Curator
+            {
+                Name = curatorName,
+                PhoneNumber = curatorPhoneNumber
+            };
+            Curators.Add(curator);
+            SaveChanges();
+        }
+
+        return curator;
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)

@@ -1,14 +1,14 @@
 import axios from 'axios'
 import React, { useEffect, useState } from "react";
 import { YMaps, Map } from "@pbe/react-yandex-maps";
+import resolveReferences from "../resolveReferences"
 
 const Home = (props) => {
 
   const [sportObjects, setSportObjects] = useState();
   useEffect(() => {
     axios.get('SportObject').then((resp) => {
-
-      setSportObjects(resp.data);
+      setSportObjects(resolveReferences(resp.data));
     });
   }, [setSportObjects]);
 
@@ -29,6 +29,7 @@ const Home = (props) => {
       objectManager.add({
         type: 'Feature',
         id: sportObject.id,
+        icon: sportObject.sportObjectType.icon,
         geometry: {
           type: 'Point',
           coordinates: [sportObject.y, sportObject.x]
@@ -39,10 +40,11 @@ const Home = (props) => {
           balloonContentBody: `<img src="/default.jpg" height="100px">`,
           balloonContentFooter: `
           ${Boolean(sportObject.url) ? '<a href="' + sportObject.url + '">Сайт объекта</a><br>' : ''}
-          ${sportObject.sportTypes?.length > 0 ? 'Виды спорта: ' + sportObject.sportTypes.$values.map(sportType => sportType.name).join(', ') + "<br>" : ''}
-          ${Boolean(sportObject.workingHoursMondayToFriday) ? 'Режим работы Пн.-Пт.:' + sportObject.workingHoursMondayToFriday + '<br>' : ''}
-          ${Boolean(sportObject.workingHoursSaturday) ? 'Режим работы Сб.:' + sportObject.workingHoursSaturday + '<br>' : ''}
-          ${Boolean(sportObject.workingHoursSunday) ? 'Режим работы Вс.:' + sportObject.workingHoursSunday + '<br>' : ''}
+          <b>Тип объекта</b>: ${sportObject.sportObjectType.name}<br>
+          ${sportObject.sportTypes?.length > 0 ? '<b>Виды спорта</b>: ' + sportObject.sportTypes.map(sportType => sportType.name).join(', ') + "<br>" : ''}
+          ${Boolean(sportObject.workingHoursMondayToFriday) ? '<b>Режим работы Пн.-Пт.:</b> ' + sportObject.workingHoursMondayToFriday + '<br>' : ''}
+          ${Boolean(sportObject.workingHoursSaturday) ? '<b>Режим работы Сб.:</b> ' + sportObject.workingHoursSaturday + '<br>' : ''}
+          ${Boolean(sportObject.workingHoursSunday) ? '<b>Режим работы Вс.:</b> ' + sportObject.workingHoursSunday + '<br>' : ''}
           <a href="/object/${sportObject.id}">Подробнее</a>
           `
         },
@@ -53,11 +55,11 @@ const Home = (props) => {
     objectManager.objects.each(object => {
       if (object.isActive) {
         objectManager.objects.setObjectOptions(object.id, {
-          preset: 'islands#blueIcon'
+          preset: 'islands#blue' + object.icon + 'Icon'
         });
       } else {
         objectManager.objects.setObjectOptions(object.id, {
-          preset: 'islands#redIcon'
+          preset: 'islands#red' + object.icon + 'Icon'
         });
       }
 
@@ -67,7 +69,7 @@ const Home = (props) => {
   }
 
   if (!sportObjects) {
-    return "Loading...";
+    return "Загрузка...";
   }
 
   return (<YMaps>
